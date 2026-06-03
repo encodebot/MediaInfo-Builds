@@ -1,4 +1,4 @@
-name: Automated MediaInfo Compiler
+name: Build MediaInfo
 
 on:
   schedule:
