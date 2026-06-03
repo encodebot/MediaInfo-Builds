@@ -50,19 +50,23 @@ jobs:
           fi
 
   build-binaries:
-    name: Compile Binaries
+    name: Compile Binaries (${{ matrix.arch }})
     needs: check-version
     if: needs.check-version.outputs.build_needed == 'true'
-    runs-on: ubuntu-latest
+    # Dynamically switches hardware based on the matrix!
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [amd64, arm64]
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm64 # Uses GitHub's free, native ARM64 servers
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (For ARM64 Emulation)
-        uses: docker/setup-qemu-action@v3
+      # Notice: QEMU is completely removed here because we are using native hardware!
 
       - name: Set up Docker Buildx (For Caching & Extraction)
         uses: docker/setup-buildx-action@v3
@@ -70,6 +74,9 @@ jobs:
       - name: Build and Extract Binary with Docker Cache
         run: |
           set -euo pipefail
+          
+          # Create explicit clean directories to prevent missing path errors
+          mkdir -p ./output ./artifacts
           
           docker buildx build \
             --platform linux/${{ matrix.arch }} \
@@ -79,14 +86,14 @@ jobs:
             --cache-from type=gha,scope=mediainfo-${{ matrix.arch }} \
             -f Dockerfile .
 
-          # Rename binary for clarity before uploading
-          mv ./output/mediainfo ./mediainfo-linux-${{ matrix.arch }}
+          # Safe moving pattern into the dedicated artifacts folder
+          mv ./output/mediainfo ./artifacts/mediainfo-linux-${{ matrix.arch }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mediainfo-${{ matrix.arch }}
-          path: ./mediainfo-linux-${{ matrix.arch }}
+          path: ./artifacts/mediainfo-linux-${{ matrix.arch }}
           retention-days: 1
 
   release-and-cleanup:
@@ -104,6 +111,14 @@ jobs:
           path: ./artifacts
           merge-multiple: true
 
+      - name: Generate Checksums
+        run: |
+          set -euo pipefail
+          cd ./artifacts
+          echo "Generating SHA256 checksums for security verification..."
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,9 +128,10 @@ jobs:
           
           TAG_NAME="v$VERSION"
           echo "Creating release for $TAG_NAME..."
+          # Uploads all binaries AND the SHA256SUMS file
           gh release create "$TAG_NAME" ./artifacts/* \
             --title "MediaInfo $VERSION (Static Binaries)" \
-            --notes "Automated build of MediaInfo $VERSION for linux/amd64 and linux/arm64. Compiled with multi-core optimizations and stripped of debugging symbols."
+            --notes "Automated build of MediaInfo $VERSION for linux/amd64 and linux/arm64. Compiled natively with multi-core optimizations and stripped of debugging symbols."
 
       - name: Cleanup Old Releases (Keep Last 4)
         env:
