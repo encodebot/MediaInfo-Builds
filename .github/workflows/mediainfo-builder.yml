@@ -16,6 +16,7 @@ jobs:
   check-version:
     name: Safety Measure & Version Check
     runs-on: ubuntu-latest
+    timeout-minutes: 140
     outputs:
       build_needed: ${{ steps.check.outputs.build_needed }}
       version: ${{ steps.check.outputs.version }}
@@ -54,6 +55,7 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.build_needed == 'true'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240 # 4-hour safety net for heavy compilation
     strategy:
       matrix:
         include:
@@ -104,6 +106,7 @@ jobs:
     needs: [check-version, build-binaries]
     if: needs.check-version.outputs.build_needed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 72 # Safety net for GitHub API uploads
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -189,6 +192,7 @@ jobs:
     name: Repository Keepalive
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
+    timeout-minutes: 61 # Safety net for git push
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
