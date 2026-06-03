@@ -1,0 +1,166 @@
+name: Automated MediaInfo Compiler
+
+on:
+  schedule:
+    # Runs at 00:00 UTC on Tuesdays, Thursdays, and Saturdays
+    - cron: '0 0 * * 2,4,6'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Force all GitHub Actions to use Node.js 24 to prevent the upcoming Node 20 deprecation failure
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  check-version:
+    name: Safety Measure & Version Check
+    runs-on: ubuntu-latest
+    outputs:
+      build_needed: ${{ steps.check.outputs.build_needed }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Upstream Version vs Latest Release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          echo "Fetching Latest MediaInfo Source..."
+          MI_URL=$(curl -fsSL "https://mediaarea.net/download/binary/mediainfo/" | grep -oP '(?<=href=")\d+(?:\.\d+)+(?=/")' | sort -Vu | tail -n 1)
+          test -n "$MI_URL" || { echo "❌ FATAL ERROR: Failed to detect latest MediaInfo version."; exit 1; }
+          echo "💡 Latest MediaInfo version detected: $MI_URL"
+
+          # Fetch latest release tag from this repo (suppress error if no releases exist yet)
+          LATEST_RELEASE=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "none")
+          echo "💡 Current repository latest release: $LATEST_RELEASE"
+
+          if [ "v$MI_URL" == "$LATEST_RELEASE" ]; then
+            echo "✅ Version v$MI_URL is already built. Exiting workflow early with success."
+            echo "build_needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "🚀 New version detected! Proceeding to build v$MI_URL."
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            echo "version=$MI_URL" >> $GITHUB_OUTPUT
+          fi
+
+  build-binaries:
+    name: Compile Binaries
+    needs: check-version
+    if: needs.check-version.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (For ARM64 Emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx (For Caching & Extraction)
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Extract Binary with Docker Cache
+        run: |
+          set -euo pipefail
+          
+          docker buildx build \
+            --platform linux/${{ matrix.arch }} \
+            --build-arg MI_VERSION=${{ needs.check-version.outputs.version }} \
+            --output type=local,dest=./output \
+            --cache-to type=gha,mode=max,scope=mediainfo-${{ matrix.arch }} \
+            --cache-from type=gha,scope=mediainfo-${{ matrix.arch }} \
+            -f Dockerfile .
+
+          # Rename binary for clarity before uploading
+          mv ./output/mediainfo ./mediainfo-linux-${{ matrix.arch }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediainfo-${{ matrix.arch }}
+          path: ./mediainfo-linux-${{ matrix.arch }}
+          retention-days: 1
+
+  release-and-cleanup:
+    name: Publish Release & Purge Old
+    needs: [check-version, build-binaries]
+    if: needs.check-version.outputs.build_needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          
+          TAG_NAME="v$VERSION"
+          echo "Creating release for $TAG_NAME..."
+          gh release create "$TAG_NAME" ./artifacts/* \
+            --title "MediaInfo $VERSION (Static Binaries)" \
+            --notes "Automated build of MediaInfo $VERSION for linux/amd64 and linux/arm64. Compiled with multi-core optimizations and stripped of debugging symbols."
+
+      - name: Cleanup Old Releases (Keep Last 4)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          echo "Fetching all releases..."
+          # Get all releases sorted by creation date (newest first)
+          RELEASES=$(gh release list --limit 100 | awk '{print $1}')
+          
+          COUNT=0
+          for REL in $RELEASES; do
+            COUNT=$((COUNT+1))
+            if [ $COUNT -gt 4 ]; then
+              echo "🗑️ Deleting old release: $REL"
+              gh release delete "$REL" --cleanup-tag -y
+            else
+              echo "✅ Keeping release: $REL"
+            fi
+          done
+
+  keepalive:
+    name: Repository Keepalive
+    runs-on: ubuntu-latest
+    # Run keepalive ONLY on scheduled cron runs, not manual dispatches
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push Keepalive Commit
+        run: |
+          set -euo pipefail
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Create or checkout a dedicated keepalive branch
+          git checkout -B keepalive
+          
+          # Create an empty dummy commit
+          git commit --allow-empty -m "chore: keepalive to prevent GitHub Actions cron pause [skip ci]"
+          
+          # Push to keepalive branch
+          git push origin keepalive --force
