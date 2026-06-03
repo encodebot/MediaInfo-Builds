@@ -61,12 +61,11 @@ jobs:
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
-            runner: ubuntu-24.04-arm64 # Uses GitHub's free, native ARM64 servers
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Notice: QEMU is completely removed here because we are using native hardware!
 
       - name: Set up Docker Buildx (For Caching & Extraction)
         uses: docker/setup-buildx-action@v3
