@@ -1,4 +1,4 @@
-# MI-Builds
+# MediaInfo-Builds
 MediaInfo Builds For ARM64 & AMD64
 
 # Automated MediaInfo Compiler
