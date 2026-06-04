@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install prerequisites required for MediaInfo compilation
-# We intentionally omit extra libraries to ensure the binary remains highly portable.
+# Intentionally omit extra libraries to ensure the binary remains highly portable.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
