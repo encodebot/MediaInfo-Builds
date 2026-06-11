@@ -1,11 +1,12 @@
-FROM ubuntu:24.04 AS builder
+FROM debian:trixie-slim AS builder
 
 # Enforce strict error handling. Instantly aborts on any hidden failure.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Set non-interactive frontend for apt to prevent hanging prompts
 ENV DEBIAN_FRONTEND=noninteractive
-
+# Accept MediaInfo version as a dynamic build argument
+ARG MI_VERSION
 # Install prerequisites required for MediaInfo compilation
 # Intentionally omit extra libraries to ensure the binary remains highly portable.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,9 +21,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Accept MediaInfo version as a dynamic build argument
-ARG MI_VERSION
 
 # Download and extract MediaInfo source safely with CI-friendly wget progress
 RUN wget --progress=dot:giga "https://mediaarea.net/download/binary/mediainfo/${MI_VERSION}/MediaInfo_CLI_${MI_VERSION}_GNU_FromSource.tar.xz" -O mediainfo_src.tar.xz && \

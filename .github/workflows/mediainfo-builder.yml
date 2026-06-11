@@ -1,6 +1,7 @@
 name: Build MediaInfo
 
 on:
+  push:
   schedule:
     # Runs at 00:00 UTC on Tuesdays, Thursdays, and Saturdays
     - cron: '0 0 * * 2,4,6'
@@ -8,10 +9,6 @@ on:
 
 permissions:
   contents: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  NODE_OPTIONS: "--no-deprecation"
 
 jobs:
   check-version:
@@ -23,7 +20,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Check Upstream Version vs Latest Release
         id: check
@@ -31,7 +28,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          
+
           echo "Fetching Latest MediaInfo Source..."
           MI_URL=$(curl -fsSL "https://mediaarea.net/download/binary/mediainfo/" | grep -oP '(?<=href=")\d+(?:\.\d+)+(?=/")' | sort -Vu | tail -n 1)
           test -n "$MI_URL" || { echo "❌ FATAL ERROR: Failed to detect latest MediaInfo version."; exit 1; }
@@ -70,16 +67,16 @@ jobs:
             ext_name: linuxarm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build, Extract, and Compress Binary
         run: |
           set -euo pipefail
           mkdir -p ./output ./artifacts
-          
+
           docker buildx build \
             --platform linux/${{ matrix.arch }} \
             --build-arg MI_VERSION=${{ needs.check-version.outputs.version }} \
@@ -96,7 +93,7 @@ jobs:
           cd ..
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mediainfo-${{ matrix.arch }}
           path: ./artifacts/mediainfo-master-latest-${{ matrix.ext_name }}-gpl.tar.xz
@@ -110,12 +107,12 @@ jobs:
     timeout-minutes: 72 # Safety net for GitHub API uploads
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 2 # Required to fetch the previous commit hash
 
       - name: Download Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./artifacts
           merge-multiple: true
@@ -148,21 +145,21 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
           set -euo pipefail
-          
+
           TAG_NAME="v$VERSION"
-          
+
           # Generate dynamic text variables
           DATE_STR=$(date -u +'%d/%m/%Y At %H:%M')
           COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
           PREV_HASH=$(git log -2 --pretty=%H | tail -n 1)
-          
+
           # Create the exact release body you requested
           cat <<EOF > release_notes.txt
           This Latest Stable Automated Build Of MediaInfo Created On $DATE_STR
           $COMMIT_MSG
           This reverts commit $PREV_HASH.
           EOF
-          
+
           echo "Creating release for $TAG_NAME..."
           gh release create "$TAG_NAME" ./artifacts/* \
             --title "MediaInfo $VERSION (Executable) - Latest" \
@@ -173,11 +170,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          
+
           echo "Fetching all releases..."
           # Get all releases sorted by creation date (newest first)
           RELEASES=$(gh release list --limit 100 | awk '{print $1}')
-          
+
           COUNT=0
           for REL in $RELEASES; do
             COUNT=$((COUNT+1))
@@ -196,17 +193,17 @@ jobs:
     timeout-minutes: 61 # Safety net for git push
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Push Keepalive Commit
         run: |
           set -euo pipefail
-          
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git checkout -B keepalive
+
+          git checkout -B dev
           git commit --allow-empty -m "chore: keepalive to prevent GitHub Actions cron pause [skip ci]"
-          git push origin keepalive --force
+          git push origin dev --force
