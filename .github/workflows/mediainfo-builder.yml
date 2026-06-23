@@ -3,8 +3,8 @@ name: Build MediaInfo
 on:
   push:
   schedule:
-    # Runs at 00:00 UTC on Tuesdays, Thursdays, and Saturdays
-    - cron: '0 0 * * 2,4,6'
+    # Runs Every Week At 11:50 PM UTC On Tuesdays, Thursdays & Saturdays.
+    - cron: '50 23 * * 2,4,6'
   workflow_dispatch:
 
 permissions:
@@ -13,14 +13,14 @@ permissions:
 jobs:
   check-version:
     name: Safety Measure & Version Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 140
     outputs:
       build_needed: ${{ steps.check.outputs.build_needed }}
       version: ${{ steps.check.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Check Upstream Version vs Latest Release
         id: check
@@ -39,8 +39,9 @@ jobs:
           echo "💡 Current repository latest release: $LATEST_RELEASE"
 
           if [ "v$MI_URL" == "$LATEST_RELEASE" ]; then
-            echo "✅ Version v$MI_URL is already built. Exiting workflow early with success."
-            echo "build_needed=false" >> $GITHUB_OUTPUT
+            echo "✅ Version v$MI_URL is already built. Forcing rebuild for security updates. 💚"
+            echo "build_needed=true" >> $GITHUB_OUTPUT
+            echo "version=$MI_URL" >> $GITHUB_OUTPUT
           else
             echo "🚀 New version detected! Proceeding to build v$MI_URL."
             echo "build_needed=true" >> $GITHUB_OUTPUT
@@ -48,10 +49,10 @@ jobs:
           fi
 
   build-binaries:
-    # Uses the visual_arch for human readability (x64 and ARM64)
+    # Uses the visual_arch (x64 and ARM64)
     name: Compile Binaries (${{ matrix.visual_arch }})
     needs: check-version
-    if: needs.check-version.outputs.build_needed == 'true'
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.check-version.outputs.build_needed == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240 # 4-hour safety net for heavy compilation
     strategy:
@@ -59,15 +60,15 @@ jobs:
         include:
           - arch: amd64
             visual_arch: x64
-            runner: ubuntu-latest
+            runner: ubuntu-26.04
             ext_name: linux64
           - arch: arm64
             visual_arch: ARM64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             ext_name: linuxarm64
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -77,12 +78,13 @@ jobs:
           set -euo pipefail
           mkdir -p ./output ./artifacts
 
+          # 🔜 Disabled Docker Cache, Re-Enable Later If Needed.
+          # --cache-to type=gha,mode=max,scope=mediainfo-${{ matrix.arch }} \
+          # --cache-from type=gha,scope=mediainfo-${{ matrix.arch }} \
           docker buildx build \
             --platform linux/${{ matrix.arch }} \
             --build-arg MI_VERSION=${{ needs.check-version.outputs.version }} \
             --output type=local,dest=./output \
-            --cache-to type=gha,mode=max,scope=mediainfo-${{ matrix.arch }} \
-            --cache-from type=gha,scope=mediainfo-${{ matrix.arch }} \
             -f Dockerfile .
 
           # Navigate to output, make executable, and compress into a real tar.xz archive
@@ -102,12 +104,12 @@ jobs:
   release-and-cleanup:
     name: Publish Release & Purge Old
     needs: [check-version, build-binaries]
-    if: needs.check-version.outputs.build_needed == 'true'
-    runs-on: ubuntu-latest
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.check-version.outputs.build_needed == 'true'
+    runs-on: ubuntu-26.04
     timeout-minutes: 72 # Safety net for GitHub API uploads
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 2 # Required to fetch the previous commit hash
 
@@ -147,13 +149,19 @@ jobs:
           set -euo pipefail
 
           TAG_NAME="v$VERSION"
+          # Defensive check: Ensure release doesn't already exist to prevent race conditions
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "♻️ Release $TAG_NAME already exists. Deleting to recreate a fresh build... ☣️"
+            gh release delete "$TAG_NAME" --cleanup-tag -y
+            sleep 5
+          fi
 
           # Generate dynamic text variables
           DATE_STR=$(date -u +'%d/%m/%Y At %H:%M')
           COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
           PREV_HASH=$(git log -2 --pretty=%H | tail -n 1)
 
-          # Create the exact release body you requested
+          # Create The Release Body.
           cat <<EOF > release_notes.txt
           This Latest Stable Automated Build Of MediaInfo Created On $DATE_STR
           $COMMIT_MSG
@@ -188,12 +196,12 @@ jobs:
 
   keepalive:
     name: Repository Keepalive
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: github.event_name == 'schedule'
     timeout-minutes: 61 # Safety net for git push
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 

@@ -1,14 +1,14 @@
-FROM debian:trixie-slim AS builder
+FROM debian:forky-slim AS builder
 
-# Enforce strict error handling. Instantly aborts on any hidden failure.
+# Enforce Strict Error Handling. Instantly Aborts On Any Hidden Failure.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Set non-interactive frontend for apt to prevent hanging prompts
+# Set Non-Interactive Frontend For Apt To Prevent Hanging Prompts.
 ENV DEBIAN_FRONTEND=noninteractive
-# Accept MediaInfo version as a dynamic build argument
+# Accept MediaInfo Version As A Dynamic Build Argument.
 ARG MI_VERSION
-# Install prerequisites required for MediaInfo compilation
-# Intentionally omit extra libraries to ensure the binary remains highly portable.
+# Intentionally Omit Extra Libraries To Ensure The Binary Remains Highly Portable.
+# 1. Install Prerequisites Required For MediaInfo Compilation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -22,19 +22,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and extract MediaInfo source safely with CI-friendly wget progress
+# 2. Download & Extract Mediainfo Source Safely With CI-Friendly wget Progress.
 RUN wget --progress=dot:giga "https://mediaarea.net/download/binary/mediainfo/${MI_VERSION}/MediaInfo_CLI_${MI_VERSION}_GNU_FromSource.tar.xz" -O mediainfo_src.tar.xz && \
     tar -xf mediainfo_src.tar.xz
 
 WORKDIR /MediaInfo_CLI_GNU_FromSource
 
-# Compile with multi-core support to cut build time in half
+# 3. Compile With Multi-Core Support To Cut Build Time In Half.
 RUN export MAKEFLAGS="-j$(nproc)" && \
     ./CLI_Compile.sh
 
-# Strip debugging symbols. --strip-all is the correct standard for final executables.
+# 4. Strip Debugging Symbols From The Actual Binaries To Shrink The Final Size.
 RUN strip --strip-all MediaInfo/Project/GNU/CLI/mediainfo
 
-# Use a scratch image to export ONLY the compiled binary back to the host
+# 5. Use A Scratch Image To Export ONLY The Portable Directory Structure Back To The Host.
 FROM scratch AS export-stage
 COPY --from=builder /MediaInfo_CLI_GNU_FromSource/MediaInfo/Project/GNU/CLI/mediainfo /
